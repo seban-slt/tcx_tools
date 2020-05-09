@@ -26,7 +26,7 @@ import sys
 #sys.argv = [sys.argv[0], 'test_files/tcx/super_cobra.tcx']
 #sys.argv = [sys.argv[0], 'test_files/tcx/ixion2.tcx','0x61']
 #sys.argv = [sys.argv[0], 'test_files/tcx/spy_vs_spy.tcx','0xaf']
-sys.argv = [sys.argv[0], 'test_files/tcx/universal_hero.tcx','0xb4']
+#sys.argv = [sys.argv[0], 'test_files/tcx/universal_hero.tcx','0xb4']
 
 # if want do see stream debug info set to "True"
 stream_debug_mode = False
