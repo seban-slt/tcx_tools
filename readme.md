@@ -26,8 +26,6 @@ Code is written in Python. I used 3.8.2 version to test, run this simple code. I
 
 Poetic License
 --------------
-Poetic License
---------------
 This work 'as-is' we provide.  
 No warranty express or implied.  
 We've done our best,  
