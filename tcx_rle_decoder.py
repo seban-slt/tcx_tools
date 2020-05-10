@@ -61,7 +61,7 @@ if ((in_data[0] != 0xff) or (in_data[1] != 0xff)):
     print("Maybe the XOR key for data decoding is wrong or not given?")
 
     if (in_data[0] == in_data[1]):
-        print("\n>>> But if I can guess try this XOR key value: 0x%02X <<<\n" %(in_data[0] ^ int(0xff)))
+        print("\n>>> But if I can guess try this XOR key value: 0x%02X <<<\n" %(in_data[0] ^ int(0xff) ^ xor_key))
 
     exit(-1)
 
