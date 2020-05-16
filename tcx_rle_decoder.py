@@ -32,10 +32,16 @@ import sys
 stream_debug_mode = False
 
 if (len(sys.argv) < 2):
-    print("No input file specified! Exiting.");
+    print("No input file specified! Exiting.")
     exit(-1)
 
 input_file_name = sys.argv[1]
+
+# check if file exists
+if (os.path.exists(input_file_name) == False):
+    print("Input file not found! Exiting!")
+    exit(-1)
+
 input_file_size = os.path.getsize(input_file_name)
 
 print("\nInput file is",input_file_name,"and the file size is", input_file_size, "bytes.")
@@ -44,38 +50,46 @@ in_data = bytearray( open(input_file_name,"rb").read() )
 
 print("TCX data loaded, checking data...\n")
 
-# check if xor key is passed via command line
-if (len(sys.argv) == 3):
-    xor_key = int(sys.argv[2],16)
+if (in_data[0] != in_data[1]):
+    print("Wrong file header! Bad file or corrupted? Exiting.")
+    exit(-1)
+else:
+    xor_key = (in_data[0] ^ int(0xff))
 
-    # XOR input data with passed XOR key   
+if (xor_key != 0):
+    print(">>> Data encrypted! Trying to use calculated XOR key 0x%02X <<<\n" % xor_key)
+
+    # XOR input data with passed XOR key
     for x in range(0,len(in_data)):
         in_data[x] ^= xor_key
-else:
-    xor_key = 0
+
+# for debug only! xor-ed data dump to file.
+if (stream_debug_mode):
+    xor_filename = input_file_name + ".xor"
+    open(xor_filename,"wb").write(in_data)
 
 print("Header is: $%02x%02x" %(in_data[0],in_data[1]))
+
 # check if the input file have correct Atari-DOS file header ($ff,$ff)
 if ((in_data[0] != 0xff) or (in_data[1] != 0xff)):
     print("\nNot a Atari DOS file header! Wrong file type? Data encrypted?")
     print("Maybe the XOR key for data decoding is wrong or not given?")
-
-    if (in_data[0] == in_data[1]):
-        print("\n>>> But if I can guess try this XOR key value: 0x%02X <<<\n" %(in_data[0] ^ int(0xff) ^ xor_key))
-
     exit(-1)
+
+# segment offset list
+seg_offsets = []
 
 # at the begining put Atari-DOS header on the output data array
 out_data = bytearray(b'\xFF\xFF')
 
 # zeroize block counter
-blk = 0;
+blk = 0
 
 # skip atari header file ($ff,$ff)
 i = 2
 
-# zeroinze garbage data counter
-garbage_data_size = 0
+# init segments cleanup flag
+cleanup_needed = False
 
 # main data processing loop
 while (i < len(in_data)):
@@ -89,37 +103,62 @@ while (i < len(in_data)):
     blk_end   = in_data[i+2]+256*in_data[i+3]
     blk_len   = (blk_end - blk_start) + 1
 
+    if stream_debug_mode:
+        print()
+
+    print("block %03d: $%04x-$%04x ($%04x)" %(blk,blk_start,blk_end,blk_len))
+
     # check block validity
     if (blk_len > 0) and (blk_start != (xor_key+256*xor_key)):
 
-        if stream_debug_mode:
-            print()
-
-        print("block %03d: $%04x-$%04x" %(blk,blk_start,blk_end))
+        # add current segment offset to list
+        seg_offsets.append(len(out_data))
 
         # copy header block data to output
-        out_data.append(in_data[i+0]);
-        out_data.append(in_data[i+1]);
-        out_data.append(in_data[i+2]);
-        out_data.append(in_data[i+3]);
+        out_data.append(in_data[i+0])
+        out_data.append(in_data[i+1])
+        out_data.append(in_data[i+2])
+        out_data.append(in_data[i+3])
 
         # move input data pointer to next valid data
         i += 4
 
         # increment block counter
-        blk += 1;
-        
+        blk += 1
+
     else:
-        # if no valid data block, skip processing
+        # if no valid data block...
+        print("^^^^^^^^^: Invalid block header detected! Processing stopped.")
 
-        garbage_data_size += 1
+        # chceck block length
+        if (blk_len < 0):
+            print("\n>>> Something is really wrong! File corupted!?! Sorry, I can't do anything more. Exiting.")
+            exit(-1)
 
-        # slide to next input byte
-        i+=1
-        continue
+        # abort processing
+        break
+
+    # remember actual offset @ out_data
+    actual_out_data_offset = (len(out_data)-4)
 
     # block processing loop
     while (blk_len):
+
+        if (i > len(in_data)-1):
+            print("^^^^^^^^^: unexpected end of data at file segment! [missing $%04x byte(s)]" %(blk_len))
+            print("         : block throwed away, output file may be corrupted.\n")
+
+            # cut out bytes added from bad block
+            out_data = out_data[0:actual_out_data_offset]
+
+            # remove bad segment from list
+            seg_offsets.pop()
+
+            # decrement valid blocks count
+            blk -= 1
+
+            cleanup_needed = True
+            break
 
         # check for RLE zero escape code
         if (in_data[i] == 0xbf):
@@ -130,13 +169,13 @@ while (i < len(in_data)):
             # send the zeros to output
             for r in range(0,cnt):
                 out_data.append(0x00)
-        
+
             # move input data pointer to next valid data
             i += 2
             # decremant block length
-            blk_len -= cnt;
+            blk_len -= cnt
 
-            # print info message
+            # print deg-info message
             if stream_debug_mode:
                 print("\t@ $%04x RLE zero block, len =%5i" %(i,r))
 
@@ -157,13 +196,13 @@ while (i < len(in_data)):
             i += 3
 
             # decrement block length
-            blk_len -= cnt;
+            blk_len -= cnt
 
-            # print info message
+            # print dbg-info message
             if stream_debug_mode:
                 print("\t@ $%04x RLE fill block, len =%5i" %(i , cnt), "(",format(val,"02x"),")")
 
-        # if plan byte on input stream then copy to output
+        # if plain byte on input stream then copy to output
         else:
             out_data.append(in_data[i])
 
@@ -173,11 +212,38 @@ while (i < len(in_data)):
             # decrement block length
             blk_len -=1
 
-if (garbage_data_size):
-    print("\n!!! WARNING !!! Bad header data was detected, skipped", garbage_data_size, "garbage byte(s).")
+# chceck cleanup flag
+if (cleanup_needed):
+    print("Trying to cleanup data segments, removing blocks: ",end = '')
 
-# processing done message        
-print("\nInput data processing done,", blk, "block(s) processed, generating output file...");
+    # process all segments
+    while len(seg_offsets):
+
+        # get actual block offset
+        offset = seg_offsets.pop()
+
+        # calculate block adresses, length
+        blk_start = out_data[offset+0]+256*out_data[offset+1]
+        blk_end   = out_data[offset+2]+256*out_data[offset+3]
+        blk_len   = (blk_end - blk_start)
+
+        # if correct block found, stop cleanup.
+        if (blk_len > 0):
+            break
+
+        # print block number
+        print("%03d, " %(blk-1), end='')
+
+        # cut output data stream
+        out_data = out_data[0:offset]
+
+        # decrement block count
+        blk -= 1
+
+    print("done.")
+
+# processing done message
+print("\nInput data processing done,", blk, "correct block(s) processed, generating output file...")
 
 # generate output filename
 output_filename = input_file_name + ".xex"
