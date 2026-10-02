@@ -104,7 +104,11 @@ file read errors, and every possible cut of a multi-segment file. A separate
 process checks 3,000 deterministic random or mutated inputs with a timeout to
 catch unexpected exceptions and loops.
 
-### chkxex.py version 2 - 2026-10-02
+## Version history
+
+### `chkxex.py` — Version 2
+
+**Updated:** 2026-10-02
 
 This update fixes crashes, infinite loops and false success reports when
 checking malformed XEX files.
