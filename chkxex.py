@@ -161,14 +161,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(f"\nInput file is {args.filename} and the file size is {len(data)} bytes.\n")
     count = 0
+    header_count = 0
     try:
         for record in iter_records(data):
             if isinstance(record, HeaderMarker):
-                print(f"header @ file ${record.offset:06x}: $FF,$FF")
+                header_count += 1
+                print(f"header {header_count:03d} @ file ${record.offset:06x}: $FF,$FF")
                 continue
             segment = record
             description = (
-                f"block {segment.number:03d} @ file ${segment.offset:06x}: "
+                f"block  {segment.number:03d} @ file ${segment.offset:06x}: "
                 f"${segment.start:04x}-${segment.end:04x} "
                 f"(${len(segment.data):04x} bytes)"
             )
