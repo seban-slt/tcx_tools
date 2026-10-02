@@ -41,6 +41,11 @@ python3 chkxex.py program.xex
 python3 chkxex.py --help
 ```
 
+The checker prints every `$FF,$FF` header marker with its zero-based file offset,
+including the initial signature, repeated markers and markers before an error.
+Identical bytes inside segment data are not interpreted as headers. Markers and
+segments are listed in file order.
+
 The checker prints each complete segment's number, zero-based file offset,
 load address range and length in hexadecimal. The file offset points to the
 four-byte address header, after any `$FFFF` markers. RUN/INIT annotations
@@ -55,6 +60,7 @@ expected/available byte counts for incomplete fields. For example, a complete
 one-byte segment followed by an incomplete three-byte segment produces:
 
 ```text
+header @ file $000000: $FF,$FF
 block 001 @ file $000002: $2000-$2000 ($0001 bytes)
 Error: segment 002, file offset $00000b: incomplete data for $3000-$3002: expected 3 bytes, found 1 (missing 2)
 File does not conform to the checked XEX segment structure.
@@ -131,5 +137,4 @@ Use as is fit,
 free or for profit.
 
 These rights, on this notice, rely.
-
 

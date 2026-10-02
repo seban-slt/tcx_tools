@@ -2,6 +2,9 @@
 #
 # done by Seban/Slight
 #
+# Version 2 - 2026-10-02
+# Robust validation, precise diagnostics and $FF,$FF header marker reporting.
+#
 # file is released as addon to Turbo Copy 3/4 stream analyzer & decompressor
 #
 # Python 3.8 or newer; standard library only.
@@ -17,7 +20,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from struct import unpack_from
-from typing import Iterator, List, Optional, Sequence
+from typing import Iterator, List, Optional, Sequence, Union
+
+
+@dataclass(frozen=True)
+class HeaderMarker:
+    """A $FF,$FF marker at a zero-based file offset."""
+
+    offset: int
 
 
 @dataclass(frozen=True)
@@ -45,8 +55,8 @@ class XexFormatError(ValueError):
         super().__init__(f"{location}: {message}")
 
 
-def iter_segments(data: bytes) -> Iterator[Segment]:
-    """Yield complete segments, then raise XexFormatError at the first error.
+def iter_records(data: bytes) -> Iterator[Union[HeaderMarker, Segment]]:
+    """Yield markers and complete segments in file order, stopping on errors.
 
     Require an initial $FFFF signature and at least one segment. Repeated
     $FFFF markers are accepted before segments, but not on their own at EOF.
@@ -60,11 +70,13 @@ def iter_segments(data: bytes) -> Iterator[Segment]:
     if data[:2] != b"\xff\xff":
         raise XexFormatError(0, "expected the Atari DOS $FFFF file signature")
 
+    yield HeaderMarker(0)
     offset = 2
     number = 1
     while True:
         # $FFFF is a marker only at a segment boundary, never inside its data.
         while data[offset:offset + 2] == b"\xff\xff":
+            yield HeaderMarker(offset)
             offset += 2
 
         available = len(data) - offset
@@ -105,6 +117,13 @@ def iter_segments(data: bytes) -> Iterator[Segment]:
             return
 
 
+def iter_segments(data: bytes) -> Iterator[Segment]:
+    """Yield complete segments; propagate format errors from iter_records."""
+    for record in iter_records(data):
+        if isinstance(record, Segment):
+            yield record
+
+
 def describe_vectors(segment: Segment) -> List[str]:
     """Describe RUN/INIT bytes written by this segment, without simulating DOS."""
     descriptions = []
@@ -143,7 +162,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"\nInput file is {args.filename} and the file size is {len(data)} bytes.\n")
     count = 0
     try:
-        for segment in iter_segments(data):
+        for record in iter_records(data):
+            if isinstance(record, HeaderMarker):
+                print(f"header @ file ${record.offset:06x}: $FF,$FF")
+                continue
+            segment = record
             description = (
                 f"block {segment.number:03d} @ file ${segment.offset:06x}: "
                 f"${segment.start:04x}-${segment.end:04x} "

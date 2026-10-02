@@ -184,6 +184,49 @@ class CliTests(unittest.TestCase):
         self.assertIn("RUN=$2000", result.stdout)
         self.assertIn("structure is valid (2 segment(s))", result.stdout)
 
+    def test_header_markers_are_reported_in_file_order(self):
+        data = b"\xff\xff" * 3 + block(0x3000, b"\xff\xff")
+        data += block(0x2000, b"\x11\x22")
+        data += b"\xff\xff" * 2 + block(0x2001, b"\x33")
+        self.path.write_bytes(data)
+        result = self.run_cli(self.path)
+        self.assertEqual(result.returncode, 0)
+        records = [
+            line for line in result.stdout.splitlines()
+            if line.startswith(("header @", "block "))
+        ]
+        self.assertEqual(records, [
+            "header @ file $000000: $FF,$FF",
+            "header @ file $000002: $FF,$FF",
+            "header @ file $000004: $FF,$FF",
+            "block 001 @ file $000006: $3000-$3001 ($0002 bytes)",
+            "block 002 @ file $00000c: $2000-$2001 ($0002 bytes)",
+            "header @ file $000012: $FF,$FF",
+            "header @ file $000014: $FF,$FF",
+            "block 003 @ file $000016: $2001-$2001 ($0001 bytes)",
+        ])
+
+    def test_header_markers_are_reported_before_format_errors(self):
+        complete = b"\xff\xff" + block(0x2000, b"\xaa")
+        for data, offsets in (
+            (b"\xff\xff" * 3, [0, 2, 4]),
+            (complete + b"\xff\xff" * 2, [0, 7, 9]),
+            (b"\xff\xff" * 2 + pack("<HH", 5, 0), [0, 2]),
+            (complete + b"\xff", [0]),
+        ):
+            with self.subTest(data=data):
+                self.path.write_bytes(data)
+                result = self.run_cli(self.path)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Error:", result.stderr)
+                headers = [
+                    line for line in result.stdout.splitlines()
+                    if line.startswith("header @")
+                ]
+                self.assertEqual(headers, [
+                    f"header @ file ${offset:06x}: $FF,$FF" for offset in offsets
+                ])
+
     def test_errors_never_report_success_or_traceback(self):
         for hex_data in (
             "", "ff", "00 00", "ff ff", "ff ff 00 20 02 20 aa",
