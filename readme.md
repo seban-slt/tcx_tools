@@ -104,6 +104,30 @@ file read errors, and every possible cut of a multi-segment file. A separate
 process checks 3,000 deterministic random or mutated inputs with a timeout to
 catch unexpected exceptions and loops.
 
+### chkxex.py version 2 - 2026-10-02
+
+This update fixes crashes, infinite loops and false success reports when
+checking malformed XEX files.
+
+- Validate signatures, complete address headers, address ranges and available
+  segment data before using them. Reject incomplete fields and reversed ranges.
+- Preserve the listing of complete segments before an error and report the
+  failing segment, file offset and missing byte count.
+- Report every header marker in file order, including repeated markers, with
+  separate header/block numbering and aligned output columns.
+- Describe complete and partial RUN/INIT writes, including vectors contained
+  within larger segments.
+- Separate parsing from command-line output, allow importing the parser without
+  side effects, and add help and consistent exit codes: 0 for valid structure,
+  1 for format errors, 2 for usage or file read errors.
+- Document the scope of structural validation, including trailing markers,
+  custom loader data and the limits of detecting missing content.
+
+Validation: all 24 regression tests passed on Python 3.12, including every cut
+of a multi-segment fixture and 3,000 deterministic random or mutated inputs
+checked in a process with a timeout. Python 3.8 syntax compatibility was checked
+separately; the test suite was executed on Python 3.12.
+
 ## Thanks & Greetings
 
 Many thanks to QTZ, Krap, Dely and other people from atari.area forum for sharing their memories, files, and information from the past. Also big thanks for Stryker for providing many example files in his cas-archive collection.
