@@ -104,6 +104,10 @@ file read errors, and every possible cut of a multi-segment file. A separate
 process checks 3,000 deterministic random or mutated inputs with a timeout to
 catch unexpected exceptions and loops.
 
+The [Tests workflow](.github/workflows/tests.yml) runs this same suite on
+Python 3.8, 3.12 and 3.14 for every pull request targeting `master` and every
+push to `master`. Each version reports a separate `Tests (Python ...)` check.
+
 ## Version history
 
 ### `chkxex.py` — Version 2
