@@ -4,158 +4,168 @@
 #
 # file is released as addon to Turbo Copy 3/4 stream analyzer & decompressor
 #
-# >>> Python 3.8.2 was used to test & run this code <<<
+# Python 3.8 or newer; standard library only.
 #
-# .O.	released at 2020.05.17
+# .O. released at 2020.05.17
 # ..O
-# OOO	>>> Public Domain <<<
+# OOO >>> Public Domain <<<
 
-import os
+"""Inspect the segment structure of Atari DOS binary (XEX) files."""
+
+import argparse
 import sys
+from dataclasses import dataclass
+from pathlib import Path
+from struct import unpack_from
+from typing import Iterator, List, Optional, Sequence
 
-# example cmd-line parameters, needed only when testing inside the IDLE Python IDE
-#sys.argv = [sys.argv[0], 'krap_universal_hero.raw.xex']
 
-# check the input args
-if (len(sys.argv) < 2):
-    print("No input file specified! Exiting.");
-    exit(-1)
+@dataclass(frozen=True)
+class Segment:
+    """A complete segment; offset points to its start/end address header."""
 
-# get the input filename from command line
-input_file_name = sys.argv[1]
+    number: int
+    offset: int
+    start: int
+    end: int
+    data: bytes
 
-# check if file exists
-if (os.path.exists(input_file_name) == False):
-    print("Input file not found! Exiting!")
-    exit(-1)
 
-# get the size of input file
-input_file_size = os.path.getsize(input_file_name)
+class XexFormatError(ValueError):
+    """An incomplete or invalid field at a zero-based file offset."""
 
-# print-out info about file
-print("\nInput file is",input_file_name,"and the file size is", input_file_size, "bytes.\n")
+    def __init__(
+        self, offset: int, message: str, segment_number: Optional[int] = None
+    ) -> None:
+        self.offset = offset
+        self.segment_number = segment_number
+        location = f"file offset ${offset:06x}"
+        if segment_number is not None:
+            location = f"segment {segment_number:03d}, {location}"
+        super().__init__(f"{location}: {message}")
 
-# read data into bytearray
-in_data = bytearray( open(input_file_name,"rb").read() )
 
-# chcek header
-if (in_data[0] != 0xff) or (in_data[1] != 0xff):
-    print("Wrong file header! Atari DOS binary file expected. Exiting.")
-    exit(-1)
+def iter_segments(data: bytes) -> Iterator[Segment]:
+    """Yield complete segments, then raise XexFormatError at the first error.
 
-# initial block count
-blk = 1
+    Require an initial $FFFF signature and at least one segment. Repeated
+    $FFFF markers are accepted before segments, but not on their own at EOF.
+    Every segment must have start <= end and exactly end - start + 1 bytes.
+    This checks the file's structure, not whether its program will run.
+    """
+    if len(data) < 2:
+        raise XexFormatError(
+            0, f"incomplete file signature: expected 2 bytes, found {len(data)}"
+        )
+    if data[:2] != b"\xff\xff":
+        raise XexFormatError(0, "expected the Atari DOS $FFFF file signature")
 
-# zeroize index
-idx = 0
+    offset = 2
+    number = 1
+    while True:
+        # $FFFF is a marker only at a segment boundary, never inside its data.
+        while data[offset:offset + 2] == b"\xff\xff":
+            offset += 2
 
-# clear fail flag
-fail_flag = False
+        available = len(data) - offset
+        if available < 4:
+            raise XexFormatError(
+                offset,
+                f"incomplete segment header: expected 4 bytes, found {available} "
+                f"(missing {4 - available})",
+                number,
+            )
 
-# main processing loop
-while (idx < len(in_data)):
+        start, end = unpack_from("<HH", data, offset)
+        if end < start:
+            raise XexFormatError(
+                offset,
+                f"invalid address range ${start:04x}-${end:04x}: "
+                "end address is below start address",
+                number,
+            )
 
-    # check if any sensible amount of data is present
-    if (len(in_data) - idx) < 2:
-        break
+        length = end - start + 1
+        data_offset = offset + 4
+        available = len(data) - data_offset
+        if available < length:
+            raise XexFormatError(
+                data_offset,
+                f"incomplete data for ${start:04x}-${end:04x}: "
+                f"expected {length} bytes, found {available} "
+                f"(missing {length - available})",
+                number,
+            )
 
-    # header analysis loop
-    while(True):
+        next_offset = data_offset + length
+        yield Segment(number, offset, start, end, data[data_offset:next_offset])
+        offset = next_offset
+        number += 1
+        if offset == len(data):
+            return
 
-        # get header bytes
-        hdr_byte_lo = in_data[idx+0]
-        hdr_byte_hi = in_data[idx+1]
 
-        # move index 
-        idx += 2
-            
-        # check for header seq 
-        if ((hdr_byte_lo == 0xff) and (hdr_byte_hi == 0xff)):
-            print("Header is: $%02x%02x" %(hdr_byte_hi,hdr_byte_lo))
+def describe_vectors(segment: Segment) -> List[str]:
+    """Describe RUN/INIT bytes written by this segment, without simulating DOS."""
+    descriptions = []
+    for name, address in (("RUN", 0x02E0), ("INIT", 0x02E2)):
+        low_present = segment.start <= address <= segment.end
+        high_present = segment.start <= address + 1 <= segment.end
+        if low_present and high_present:
+            index = address - segment.start
+            value = int.from_bytes(segment.data[index:index + 2], "little")
+            descriptions.append(f"{name}=${value:04x}")
+        elif low_present:
+            value = segment.data[address - segment.start]
+            descriptions.append(f"{name} low byte (${address:04x})=${value:02x}")
+        elif high_present:
+            value = segment.data[address + 1 - segment.start]
+            descriptions.append(
+                f"{name} high byte (${address + 1:04x})=${value:02x}"
+            )
+    return descriptions
 
-            # chcek the data len
-            if ((len(in_data) - idx) < 4):
-                fail_flag = True
-                break
-            else:
-                continue
-        else:
-            break
 
-    # chceck the fail flag
-    if (fail_flag):
-        print("Unexpected end of data during header analysis!")
-        break
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Inspect the segment structure of an Atari DOS binary (XEX) file.",
+        epilog="Exit codes: 0 = valid structure, 1 = format error, 2 = usage or file error.",
+    )
+    parser.add_argument("filename", type=Path, help="XEX file to inspect")
+    args = parser.parse_args(argv)
 
-    # calculate block start
-    blk_start = hdr_byte_lo + (256*hdr_byte_hi)
+    try:
+        data = args.filename.read_bytes()
+    except OSError as error:
+        print(f"Cannot read '{args.filename}': {error}", file=sys.stderr)
+        return 2
 
-    # calculate end of block        
-    blk_end   = in_data[idx+0]+256*in_data[idx+1]
+    print(f"\nInput file is {args.filename} and the file size is {len(data)} bytes.\n")
+    count = 0
+    try:
+        for segment in iter_segments(data):
+            description = (
+                f"block {segment.number:03d} @ file ${segment.offset:06x}: "
+                f"${segment.start:04x}-${segment.end:04x} "
+                f"(${len(segment.data):04x} bytes)"
+            )
+            vectors = describe_vectors(segment)
+            if vectors:
+                description += " ---> " + ", ".join(vectors)
+            print(description)
+            count += 1
+    except XexFormatError as error:
+        sys.stdout.flush()
+        print(f"Error: {error}", file=sys.stderr)
+        print(
+            "File does not conform to the checked XEX segment structure.",
+            file=sys.stderr,
+        )
+        return 1
 
-    # move index 
-    idx += 2
+    print(f"\nXEX segment structure is valid ({count} segment(s)).")
+    return 0
 
-    # calculate block length
-    blk_len   = (blk_end - blk_start) + 1
 
-    # print out the block info
-    print("block %03d: $%04x-$%04x ($%04x)" %(blk,blk_start,blk_end,blk_len),end='')
-
-    # check segment for INIT/RUN vectors
-    if (
-        ((blk_start == 0x2e0) and (blk_end == 0x2e1)) or
-        ((blk_start == 0x2e2) and (blk_end == 0x2e3)) or
-        ((blk_start == 0x2e0) and (blk_end == 0x2e3))):
-
-        # is this special segment type?
-        if ((blk_start == 0x2e0) and (blk_end == 0x2e1)):
-            seg_name=" RUN"
-        elif ((blk_start == 0x2e2) and (blk_end == 0x2e3)):
-            seg_name="INIT"
-        else:
-            seg_name=" RUN/INIT"
-
-        # print-out the special segment name
-        print(" --->",seg_name,end=' ')
-
-        # check if INIT/RUN segment bytes are present
-        if ((len(in_data) - idx) >= blk_len):
-
-            # print-out info depends of INIT/RUN block type
-            if ((blk_start == 0x2e0) and (blk_end == 0x2e3)):
-                print("$%02x%02x/$%02x%02x" %(in_data[idx+1],in_data[idx+0],in_data[idx+3],in_data[idx+2]))
-            else:
-                print("$%02x%02x" %(in_data[idx+1],in_data[idx+0]))
-        else:
-            print(" segment malformed! (out of data)")
-            fail_flag = True
-            break
-    else:
-        print()
-
-    if (blk_end - blk_start) < 0:
-        print("^^^^^^^^^: malformed segment header.")
-
-    # how many data left?
-    data_left = (len(in_data) - idx)
-
-    # check the block length vs. data left
-    if (data_left < blk_len):
-        print("^^^^^^^^^: unexpected end of data at file segment! [missing $%04x byte(s)]" %(blk_len-data_left))
-        break
-
-    # move index to next block header
-    idx += blk_len
-
-    # increment block number
-    blk += 1
-
-# print empty line    
-print()
-
-# print out final info message
-if (fail_flag):
-    print("XEX file is corrupted and has serious errors in structure.")
-else:
-    print("File",input_file_name,"is OK!")
+if __name__ == "__main__":
+    sys.exit(main())
