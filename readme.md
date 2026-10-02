@@ -32,7 +32,109 @@ The example files can't be added to this repository, because I don't want violat
 
 ## Running the code
 
-Code is written in Python. I used 3.7.3 under Debian/Linux, and the 3.8.2 version under Windows 7 to test, run those scripts. To run just type `python3 tcx_rle_decoder.py input_filename` from command line, or `python3 chkxex.py input_filename`
+The original scripts were tested with Python 3.7.3 under Debian/Linux and Python 3.8.2 under Windows 7. The updated `chkxex.py` supports Python 3.8 or newer and uses only the standard library. Run `python3 tcx_rle_decoder.py input_filename` or `python3 chkxex.py input_filename` from the command line.
+
+### Checking XEX files
+
+```sh
+python3 chkxex.py program.xex
+python3 chkxex.py --help
+```
+
+The checker prints every `$FF,$FF` header marker with its number and zero-based file offset,
+including the initial signature, repeated markers and markers before an error.
+Identical bytes inside segment data are not interpreted as headers. Markers and
+segments are listed in file order, with aligned columns and separate header/block
+numbering starting at 001. The initial file signature counts as header 001.
+
+The checker prints each complete segment's number, zero-based file offset,
+load address range and length in hexadecimal. The file offset points to the
+four-byte address header, after any `$FFFF` markers. RUN/INIT annotations
+describe writes to `$02E0-$02E3`, including vectors inside larger segments and
+individual low/high byte writes. They do not simulate the loader or combine
+values across segments.
+
+On a format error, the checker retains the listing of earlier complete
+segments and stops at the first invalid or incomplete field. Diagnostics on
+standard error include the file offset, segment number where applicable, and
+expected/available byte counts for incomplete fields. For example, a complete
+one-byte segment followed by an incomplete three-byte segment produces:
+
+```text
+header 001 @ file $000000: $FF,$FF
+block  001 @ file $000002: $2000-$2000 ($0001 bytes)
+Error: segment 002, file offset $00000b: incomplete data for $3000-$3002: expected 3 bytes, found 1 (missing 2)
+File does not conform to the checked XEX segment structure.
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The complete input has a valid segment structure. |
+| `1` | A format error or incomplete field was found. |
+| `2` | Invalid command-line arguments or a file read error. |
+
+The structural check requires an initial `$FFFF` signature and at least one
+segment. Each segment has a little-endian start/end address pair, with
+`end >= start`, followed by exactly `end - start + 1` data bytes. Repeated
+`$FFFF` markers are allowed before a segment; markers at EOF without a following
+segment are rejected, even though some loaders tolerate them. A segment start
+word of `$FFFF` is interpreted as a marker; an end address of `$FFFF` is allowed.
+A leftover byte is also an incomplete header. Segment address ranges may overlap or appear in
+any order, and RUN/INIT writes are optional. A `$0000-$FFFF` segment contains
+65,536 bytes; there is no 64 KiB limit on the whole file.
+
+The result checks structure, not whether a program will run or its data is
+intact. Losing whole trailing segments can leave a structurally valid file.
+An INIT routine can also consume raw data that does not follow standard segment
+headers; the checker cannot interpret such custom loader behavior and stops
+if that data fails the structural check. It does not modify the input file or
+attempt to guess the next segment after an error.
+
+### Tests
+
+Run from the repository directory:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+Tests generate their own small inputs. They cover valid segment layouts,
+RUN/INIT writes, truncated signatures/headers/data, reversed ranges, exit codes,
+file read errors, and every possible cut of a multi-segment file. A separate
+process checks 3,000 deterministic random or mutated inputs with a timeout to
+catch unexpected exceptions and loops.
+
+The [Tests workflow](.github/workflows/tests.yml) runs this same suite on
+Python 3.8, 3.12 and 3.14 for every pull request targeting `master` and every
+push to `master`. Each version reports a separate `Tests (Python ...)` check.
+
+## Version history
+
+### `chkxex.py` — Version 2
+
+**Updated:** 2026-10-02
+
+This update fixes crashes, infinite loops and false success reports when
+checking malformed XEX files.
+
+- Validate signatures, complete address headers, address ranges and available
+  segment data before using them. Reject incomplete fields and reversed ranges.
+- Preserve the listing of complete segments before an error and report the
+  failing segment, file offset and missing byte count.
+- Report every header marker in file order, including repeated markers, with
+  separate header/block numbering and aligned output columns.
+- Describe complete and partial RUN/INIT writes, including vectors contained
+  within larger segments.
+- Separate parsing from command-line output, allow importing the parser without
+  side effects, and add help and consistent exit codes: 0 for valid structure,
+  1 for format errors, 2 for usage or file read errors.
+- Document the scope of structural validation, including trailing markers,
+  custom loader data and the limits of detecting missing content.
+
+Validation: all 24 regression tests passed on Python 3.12, including every cut
+of a multi-segment fixture and 3,000 deterministic random or mutated inputs
+checked in a process with a timeout. Python 3.8 syntax compatibility was checked
+separately; the test suite was executed on Python 3.12.
 
 ## Thanks & Greetings
 
@@ -68,5 +170,3 @@ Use as is fit,
 free or for profit.
 
 These rights, on this notice, rely.
-
-
